@@ -1,7 +1,6 @@
 # jgitver-maven-plugin
 
 [![Build Status](https://travis-ci.org/jgitver/jgitver-maven-plugin.svg?branch=master)](https://travis-ci.org/jgitver/jgitver-maven-plugin)
-[![CircleCI Build Status](https://circleci.com/gh/jgitver/jgitver-maven-plugin.svg?style=shield&circle-token=9c75a2389afd0bd18f508ce30bceb3e5728b4ce8)](https://circleci.com/gh/jgitver/jgitver-maven-plugin)
 [![Open Hub project report for jgitver-maven-plugin](https://www.openhub.net/p/jgitver-maven-plugin/widgets/project_thin_badge.gif)](https://www.openhub.net/p/jgitver-maven-plugin?ref=sample) [![Discuss](https://badges.gitter.im/jgitver/jgitver.svg)](https://gitter.im/jgitver/Lobby)
 
 This plugin allows to define the pom version of your project using the information from your git history.
@@ -21,7 +20,8 @@ Here is an illustration of the capabilities of the plugin
 
 ### Activation by maven core extension
 
-Since version `0.3.0` [jgitver-maven-plugin](#jgitver-maven-plugin) needs to be run as a maven core extension
+Since version `0.3.0` [jgitver-maven-plugin](#jgitver-maven-plugin) needs to be run as a maven core extension.  
+The installation scripts below will use the latest version available ; if you are updating find the latest version [here](http://search.maven.org/#search%7Cga%7C1%7Cg%3A%22fr.brouillard.oss%22%20AND%20a%3A%22jgitver-maven-plugin%22) or [there](http://search.maven.org/solrsearch/select?q=g:%22fr.brouillard.oss%22+AND+a:%22jgitver-maven-plugin%22&core=gav&rows=1&wt=json).
 
 __via curl__
 
@@ -45,13 +45,13 @@ __manually__
 1. Create file `.mvn/extensions.xml`
 1. Put the following content to `.mvn/extensions.xml` (adapt to [latest version](http://search.maven.org/#search%7Cga%7C1%7Cg%3A%22fr.brouillard.oss%22%20a%3A%22jgitver-maven-plugin%22)).
 
-    ``` xml
+    ```xml
     <extensions xmlns="http://maven.apache.org/EXTENSIONS/1.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="http://maven.apache.org/EXTENSIONS/1.0.0 http://maven.apache.org/xsd/core-extensions-1.0.0.xsd">
       <extension>
         <groupId>fr.brouillard.oss</groupId>
         <artifactId>jgitver-maven-plugin</artifactId>
-        <version>0.4.0</version>
+        <version>1.4.4</version>
       </extension>
     </extensions>
     ```
@@ -60,20 +60,23 @@ __manually__
 
 In order to control [jgitver-maven-plugin](#jgitver-maven-plugin) behavior, you can provide a configuration
 file under `$rootProjectDir/.mvn/jgitver.config.xml`.
-The configuration file must be compliant with the [xml-schemas](https://jgitver.github.io) supported. 
+The configuration file must be compliant with the latest [jgitver-configuration-v1_1_0.xsd](https://jgitver.github.io/maven/configuration/jgitver-configuration-v1_1_0.xsd) xml schema.
 
 Here is an example configuration file:
 
 ``` xml
-<configuration xmlns="http://jgitver.github.io/maven/configuration/1.0.0-beta"
+<configuration xmlns="http://jgitver.github.io/maven/configuration/1.1.0"
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-	xsi:schemaLocation="http://jgitver.github.io/maven/configuration/1.0.0-beta https://jgitver.github.io/maven/configuration/jgitver-configuration-v1_0_0-beta.xsd ">
-    <mavenLike>true/false</mavenLike>
+	xsi:schemaLocation="http://jgitver.github.io/maven/configuration/1.1.0 https://jgitver.github.io/maven/configuration/jgitver-configuration-v1_1_0.xsd">
+    <mavenLike>true/false</mavenLike>   <!-- deprecated, use 'strategy' instead -->
+    <strategy>MAVEN|CONFIGURABLE|PATTERN</strategy>
+    <policy>MAX|LATEST|NEAREST</policy>    <!-- LookupPolicy to select the base tag/commit for the version computation -->
     <autoIncrementPatch>true/false</autoIncrementPatch>
     <useCommitDistance>true/false</useCommitDistance>
     <useDirty>true/false</useDirty>
     <useGitCommitId>true/false</useGitCommitId>
     <gitCommitIdLength>integer</gitCommitIdLength>  <!-- between [8,40] -->
+    <maxSearchDepth>integer</maxSearchDepth>  <!-- upper or equal to 1, ommited otherwise, default to infinite -->
     <nonQualifierBranches>master</nonQualifierBranches> <!-- comma separated, example "master,integration" -->
     <regexVersionTag>r([0-9]+)</regexVersionTag>  <!-- a java regular expression with a capture group matching only 
                                                        tags of the form r0, r1, ..., r34-->
@@ -97,6 +100,26 @@ Here is an example configuration file:
 
 Please consult [jgitver](https://github.com/jgitver/jgitver#configuration-modes--strategies) documentation to fully understand what the parameters do.
 
+_[Old](https://jgitver.github.io/maven/configuration/) xml schemas are kept for reference._
+
+#### Command line arguments
+
+- `-Djgitver.skip=true` : skips totally jgitver usage
+- `-Djgitver.config=FILE` : overrides default config file and uses FILE instead
+- `-Djgitver.use-version=VERSION` : execute jgitver but finally uses VERSION as the project version 
+
+#### Working on a detached HEAD
+
+When working on a detached HEAD, no branch information exists anymore from git.  
+Since `1.3.0` it now possible to provide externally the _branch_ information via a system property or an envrionement variable.
+
+- `-Djgitver.branch=SOME_BRANCH_NAME`
+- `JGITVER_BRANCH=SOME_BRANCH_NAME && mvn validate` for bash like shells
+- `SET JGITVER_BRANCH=SOME_BRANCH_NAME`  
+    `mvn validate`  
+    for windows CMD (I don't know a one iner solution)
+
+
 ### Available properties
 
 Since `0.2.0`, the plugin exposes git calculated properties available during the maven build.
@@ -115,6 +138,7 @@ You can then use them as standard maven properties in your build:
             </goals>
             <configuration>
                 <tasks>
+                    <echo>used version: ${jgitver.used_version}</echo>
                     <echo>version calculated: ${jgitver.calculated_version}</echo>
                     <echo>dirty: ${jgitver.dirty}</echo>
                     <echo>head_committer_name: ${jgitver.head_committer_name}</echo>
@@ -144,6 +168,7 @@ resulted in my case
 
 ```
 [INFO] Executing tasks
+     [echo] used version: 0.2.0-SNAPSHOT
      [echo] version calculated: 0.2.0-SNAPSHOT
      [echo] dirty: true
      [echo] head_committer_name: Matthieu Brouillard
@@ -230,11 +255,16 @@ For that purpose you can use [grip](https://github.com/joeyespo/grip).
 
 or using docker
 
-- `docker run -v $(pwd):/root/sources -w /root/sources maven:3.3.9-jdk-8 mvn -Prun-its clean verify`
+- _Linux_: `docker run --rm -v $(pwd):/root/sources -w /root/sources maven:3.5.4-jdk-8 mvn -Prun-its clean install`
+- _Windows_: `docker run --rm -v %CD%:/root/sources -w /root/sources maven:3.5.4-jdk-8 mvn -Prun-its clean install`
+- _Old linux command_: `docker run --rm -v $(pwd):/root/sources -w /root/sources maven:3.5.4-jdk-8 ./src/ci/build-with-external-it-fallback.sh`
 
 build and filter some IT tests
 
 - `mvn -Prun-its clean install "-Dinvoker.test=issues/issue-36*"`
+
+If needed, one can also add in above docker command a volume sharing 
+with the maven local repository by adding something like `-v MLR_LOCATION:/root/.m2/repository` for example `-v D:\dev\mlr:/root/.m2/repository`.
 
 ### Release
 
@@ -242,7 +272,7 @@ build and filter some IT tests
 - `git tag -a -s -m "release X.Y.Z, additionnal reason" X.Y.Z`: tag the current HEAD with the given tag name. The tag is signed by the author of the release. Adapt with gpg key of maintainer.
     - Matthieu Brouillard command:  `git tag -a -s -u 2AB5F258 -m "release X.Y.Z, additionnal reason" X.Y.Z`
     - Matthieu Brouillard [public key](https://sks-keyservers.net/pks/lookup?op=get&search=0x8139E8632AB5F258)
-- `mvn -Poss,release -DskipTests deploy`
+- `mvn -Poss,release -DskipTests clean deploy`
 - `git push --follow-tags origin master`
 
 ## Issues
@@ -258,6 +288,24 @@ Since `1.0.0`, it is possible to totally skip the plugin execution by launching 
 If your version is not calculated correctly by maven/jgitver, there are good chances that the plugin is not active.  
 Please verify that you are using maven >= 3.3.2.
 
+### build fail because all project plugins & dependencies resolve to the same version
+
+if during a build all the plugins & dependencies are resolved to the exacts same version then chances are high that you have the _local maven repository_ as a subdirectory of your jgitver handled project.
+
+To overcome this problem you have 2 possibilities:
+
+- separate correctly your project from the MLR and make sure the MLR is not a subdirectory of your jgitver managed project
+- configure jgitver (using `.mvn/jgitver.config.xml`) to ignore your subdirectory MLR, see the [configuration](#Configuration) paragraph
+    ``` xml
+    <configuration>
+        <exclusions>
+            <exclusion>path_to_your_mlr</exclusion>    <!-- can be .m2, .repository or something else -->
+        </exclusions>
+    </configuration>
+    ```
+
+see also [#90](https://github.com/jgitver/jgitver-maven-plugin/issues/90) && [#91](https://github.com/jgitver/jgitver-maven-plugin/issues/91) for discussions on this topic.
+  
 ### the invoker tests of my maven plugin project do not work anymore
 
 If you develop a maven plugin project, you normally run maven-invoker-plugin to test your plugin.  

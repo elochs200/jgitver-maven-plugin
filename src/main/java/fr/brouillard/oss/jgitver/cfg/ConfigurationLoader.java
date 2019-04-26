@@ -15,29 +15,55 @@
  */
 package fr.brouillard.oss.jgitver.cfg;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.StringReader;
-import java.nio.file.Files;
-import java.util.stream.Collectors;
-
-import javax.xml.XMLConstants;
-import javax.xml.bind.JAXBContext;
-import javax.xml.bind.JAXBException;
-import javax.xml.bind.Unmarshaller;
-import javax.xml.transform.stream.StreamSource;
-import javax.xml.validation.Schema;
-import javax.xml.validation.SchemaFactory;
-import javax.xml.validation.Validator;
-
+import fr.brouillard.oss.jgitver.JGitverUtils;
 import org.apache.maven.MavenExecutionException;
 import org.codehaus.plexus.logging.Logger;
-import org.xml.sax.SAXException;
+import org.simpleframework.xml.Serializer;
+import org.simpleframework.xml.convert.AnnotationStrategy;
+import org.simpleframework.xml.core.Persister;
+import org.simpleframework.xml.strategy.Strategy;
 
-import fr.brouillard.oss.jgitver.cfg.schema.ConfigurationSchema;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ConfigurationLoader {
-    private static final String NAMESPACE = "http://jgitver.github.io/maven/configuration/1.0.0-beta";
+    private static final String NAMESPACE_1_0_0_beta = "http://jgitver.github.io/maven/configuration/1.0.0-beta";
+    private static final String NAMESPACE_1_0_0 = "http://jgitver.github.io/maven/configuration/1.0.0";
+    private final Logger logger;
+
+    private final List<File> configurationFiles;
+
+    public ConfigurationLoader(File rootDirectory, Logger logger) {
+        this.logger = logger;
+        configurationFiles = new ArrayList<>();
+
+        String cliConfigFile = System.getProperty(JGitverUtils.CLI.OVERRIDE_CONFIG_FILE);
+        if (cliConfigFile != null) {
+            logger.debug("jgitver configuration file overridden with " + cliConfigFile);
+            configurationFiles.add(new File(cliConfigFile));
+        }
+        File extensionMavenCoreDirectory = new File(rootDirectory, ".mvn");
+        File defaultConfigurationXml = new File(extensionMavenCoreDirectory, "jgitver.config.xml");
+        File backwardCompatibleConfigurationFile = new File(extensionMavenCoreDirectory, "jgtiver.config.xml");
+
+        configurationFiles.add(defaultConfigurationXml);
+        configurationFiles.add(backwardCompatibleConfigurationFile);
+    }
+
+    public Configuration load() throws MavenExecutionException {
+        for (File cfgFile: configurationFiles) {
+            logger.debug("trying to load configuration from: " + cfgFile);
+            Configuration c = loadFromFile(cfgFile, logger);
+            if (c != null) {
+                logger.info("Using jgitver configuration file: " + cfgFile);
+                return c;
+            }
+        }
+
+        logger.info("No suitable configuration file found, using defaults");
+        return new Configuration();
+    }
 
     /**
      * Loads a Configuration object from the root directory.
@@ -49,50 +75,52 @@ public class ConfigurationLoader {
      *         default values if the configuration file does not exist
      * @throws MavenExecutionException
      *             if the file exists but cannot be read correctly
+     * @deprecated use new ConfigurationLoader(File, Logger).load() instead.
      */
     public static Configuration loadFromRoot(File rootDirectory, Logger logger) throws MavenExecutionException {
-        File extensionMavenCoreDirectory = new File(rootDirectory, ".mvn");
-        File configurationXml = new File(extensionMavenCoreDirectory, "jgitver.config.xml");
-        if (!configurationXml.canRead()) {
-            logger.debug("no configuration file found under " + configurationXml + ", looking under backwards-compatible file name");
-            configurationXml = new File(extensionMavenCoreDirectory, "jgtiver.config.xml");
-            if (!configurationXml.canRead()) {
-                logger.debug("no configuration file found under " + configurationXml + ", using defaults");
-                return new Configuration();
-            }
-        }
-
-        try {
-            logger.info("using jgitver configuration file: " + configurationXml);
-            String configurationContent = Files.readAllLines(configurationXml.toPath()).stream().collect(Collectors.joining("\n"));
-
-            Configuration c = loadConfiguration(configurationContent);
-            return c;
-        } catch (JAXBException | IOException | SAXException ex) {
-            throw new MavenExecutionException("cannot read configuration file " + configurationXml, ex);
-        }
+        return new ConfigurationLoader(rootDirectory, logger).load();
+//        File extensionMavenCoreDirectory = new File(rootDirectory, ".mvn");
+//        File configurationXml = new File(extensionMavenCoreDirectory, "jgitver.config.xml");
+//        if (!configurationXml.canRead()) {
+//            logger.debug("no configuration file found under " + configurationXml + ", looking under backwards-compatible file name");
+//            configurationXml = new File(extensionMavenCoreDirectory, "jgtiver.config.xml");
+//            if (!configurationXml.canRead()) {
+//                logger.debug("no configuration file found under " + configurationXml + ", using defaults");
+//                return new Configuration();
+//            }
+//        }
+//
+//        try {
+//            logger.info("using jgitver configuration file: " + configurationXml);
+//            Configuration c = loadFromFile(configurationXml);
+//            return c;
+//        } catch (Exception ex) {
+//            throw new MavenExecutionException("cannot read configuration file " + configurationXml, ex);
+//        }
     }
 
-    private static Configuration loadConfiguration(String configurationContent) throws JAXBException, SAXException, IOException {
-        JAXBContext jaxbContext;
-        Unmarshaller unmarshaller;
+    private static Configuration loadFromFile(File configurationXml) throws MavenExecutionException {
+        return loadFromFile(configurationXml, new InMemoryLogger());
+    }
 
-        if (configurationContent.contains(NAMESPACE)) {
-            jaxbContext = JAXBContext.newInstance(ConfigurationSchema.class);
+    private static Configuration loadFromFile(File configurationXml, Logger logger) throws MavenExecutionException {
+        Strategy strategy = new AnnotationStrategy();
+        Serializer serializer = new Persister(strategy);
 
-            StreamSource contentStreamSource = new StreamSource(new StringReader(configurationContent));
-            Schema schema = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI)
-                    .newSchema(ConfigurationLoader.class.getResource("/schemas/jgitver-configuration-v1_0_0-beta.xsd"));
-            Validator validator = schema.newValidator();
-            validator.validate(contentStreamSource);
-            unmarshaller = jaxbContext.createUnmarshaller();
-            unmarshaller.setSchema(schema);
-            ConfigurationSchema cs = (ConfigurationSchema) unmarshaller.unmarshal(new StringReader(configurationContent));
-            return cs.asConfiguration();
+        if (configurationXml.exists()) {
+            if (configurationXml.canRead()) {
+                try {
+                    return serializer.read(Configuration.class, configurationXml);
+                } catch (Exception e) {
+                    throw new MavenExecutionException("failure reading configuration from: " + configurationXml, e);
+                }
+            } else {
+                logger.warn("jgitver configuration file " + configurationXml + " cannot be read, skipping it");
+            }
         } else {
-            jaxbContext = JAXBContext.newInstance(Configuration.class);
-            unmarshaller = jaxbContext.createUnmarshaller();
-            return (Configuration) unmarshaller.unmarshal(new StringReader(configurationContent));
+            logger.debug("jgitver configuration file " + configurationXml + " does not exists, skipping it");
         }
+
+        return null;
     }
 }

@@ -15,42 +15,57 @@
  */
 package fr.brouillard.oss.jgitver.cfg;
 
+import org.simpleframework.xml.*;
+
 import java.util.LinkedList;
 import java.util.List;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlElement;
-import javax.xml.bind.annotation.XmlElementWrapper;
-import javax.xml.bind.annotation.XmlRootElement;
+import fr.brouillard.oss.jgitver.LookupPolicy;
+import fr.brouillard.oss.jgitver.Strategies;
 
-@XmlRootElement
-@XmlAccessorType(XmlAccessType.FIELD)
+@Root
+@Default(DefaultType.FIELD)
 public class Configuration {
-    @XmlElement(name = "mavenLike")
+    @Element(name = "mavenLike", required = false)
     public boolean mavenLike = true;
-    @XmlElement
+    @Element(name = "strategy", required = false)
+    public Strategies strategy;
+    @Element(name = "policy", required = false)
+    public LookupPolicy policy;
+    @Element(required = false)
     public boolean autoIncrementPatch = true;
-    @XmlElement
+    @Element(required = false)
     public boolean useCommitDistance = false;
-    @XmlElement
+    @Element(required = false)
     public boolean useDirty = false;
-    @XmlElement
+    @Element(required = false)
     public boolean failIfDirty = false;
-    @XmlElement
+    @Element(required = false)
     public boolean useDefaultBranchingPolicy = true;
-    @XmlElement
+    @Element(required = false)
+    public boolean useGitCommitTimestamp = false;
+    @Element(required = false)
     public boolean useGitCommitId = false;
-    @XmlElement
+    @Element(required = false)
     public int gitCommitIdLength = 8;
-    @XmlElement
+    @Element(required = false)
+    public int maxSearchDepth = UNSET_DEPTH;
+    @Element(required = false)
     public String nonQualifierBranches = "master";
-    @XmlElement(name = "regexVersionTag")
+    @Element(required = false)
     public String regexVersionTag;
-    @XmlElementWrapper(name = "exclusions")
-    @XmlElement(name = "exclusion")
+    @Element(required = false)
+    public String versionPattern;
+    @Element(required = false)
+    public String tagVersionPattern;
+    @ElementList(name = "exclusions", entry = "exclusion", required = false)
     public List<String> exclusions = new LinkedList<>();
-    @XmlElementWrapper(name = "branchPolicies")
-    @XmlElement(name = "branchPolicy")
+    @ElementList(name = "branchPolicies", entry = "branchPolicy", required = false)
     public List<BranchPolicy> branchPolicies = new LinkedList<>();
+    @Attribute(required = false)
+    public String schemaLocation;
+    @Element(required = false)
+    public boolean skipPomUpdate = false;
+
+    public final static int UNSET_DEPTH = -1;
 }

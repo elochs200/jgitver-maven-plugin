@@ -25,21 +25,19 @@ import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.Set;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.MavenExecutionException;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Model;
-import org.apache.maven.model.Plugin;
 import org.apache.maven.model.io.xpp3.MavenXpp3Reader;
 import org.apache.maven.model.io.xpp3.MavenXpp3Writer;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.logging.Logger;
-import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.codehaus.plexus.util.xml.pull.XmlPullParserException;
 
 import fr.brouillard.oss.jgitver.metadata.Metadatas;
@@ -52,6 +50,13 @@ public final class JGitverUtils {
     public static final String EXTENSION_GROUP_ID = "fr.brouillard.oss";
     public static final String EXTENSION_ARTIFACT_ID = "jgitver-maven-plugin";
     public static final String EXTENSION_SKIP = EXTENSION_PREFIX + ".skip";
+    public static final String EXTENSION_FLATTEN = EXTENSION_PREFIX + ".flatten";
+    public static final String EXTENSION_USE_VERSION = EXTENSION_PREFIX + ".use-version";
+    public static final String SESSION_MAVEN_PROPERTIES_KEY = EXTENSION_PREFIX + ".session";
+
+    public interface CLI {
+        String OVERRIDE_CONFIG_FILE = EXTENSION_PREFIX + ".config";
+    }
 
     private JGitverUtils() {
     }
@@ -141,15 +146,18 @@ public final class JGitverUtils {
      * Fill properties from meta data.
      *
      * @param properties     properties.
-     * @param jgitverVersion jGitverVersion.
+     * @param informationProvider the jgitver to extract information from.
      * @param logger         logger.
      */
-    public static void fillPropertiesFromMetadatas(Properties properties, JGitverVersion jgitverVersion, Logger logger) {
-        logger.debug(EXTENSION_PREFIX + " calculated version number: " + jgitverVersion.getCalculatedVersion());
-        properties.put(EXTENSION_PREFIX + ".calculated_version", jgitverVersion.getCalculatedVersion());
+    public static void fillPropertiesFromMetadatas(Properties properties, JGitverInformationProvider informationProvider, Logger logger) {
+        String calculatedVersion = informationProvider.getVersion();
+        logger.debug(EXTENSION_PREFIX + " calculated version number: " + calculatedVersion);
+        properties.put(EXTENSION_PREFIX + ".used_version", calculatedVersion);
+
+        properties.put(EXTENSION_PREFIX + ".plugin-version", JGitverMavenPluginProperties.getVersion());
 
         Arrays.asList(Metadatas.values()).stream().forEach(metaData -> {
-            Optional<String> metaValue = jgitverVersion.getGitVersionCalculator().meta(metaData);
+            Optional<String> metaValue = informationProvider.meta(metaData);
             String propertyName = EXTENSION_PREFIX + "." + metaData.name().toLowerCase(Locale.ENGLISH);
             String value = metaValue.orElse("");
             properties.put(propertyName, value);
@@ -158,73 +166,37 @@ public final class JGitverUtils {
     }
 
     /**
-     * Calculates the version to use of the given project. 
-     * @param rootProject the root project for which a version has to be calculated
-     * @param properties a property object that will be filled with additional information 
-     * @param logger a logger to use
-     * @return a non null container for the version 
-     * @throws IOException if an error ocurred while calculating the version
-     */
-    public static JGitverVersion calculateVersionForProject(MavenProject rootProject, Properties properties,
-            Logger logger) throws IOException {
-        JGitverVersion jGitverVersion = null;
-
-        logger.debug("using " + EXTENSION_PREFIX + " on directory: " + rootProject.getBasedir());
-        try (GitVersionCalculator gitVersionCalculator = GitVersionCalculator.location(rootProject.getBasedir())) {
-            Plugin plugin = rootProject.getPlugin("fr.brouillard.oss:jgitver-maven-plugin");
-
-            JGitverPluginConfiguration pluginConfig =
-                    new JGitverPluginConfiguration(
-                            Optional.ofNullable(plugin)
-                                    .map(Plugin::getConfiguration)
-                                    .map(Xpp3Dom.class::cast)
-                    );
-
-            gitVersionCalculator.setMavenLike(pluginConfig.mavenLike())
-                    .setAutoIncrementPatch(pluginConfig.autoIncrementPatch())
-                    .setUseDistance(pluginConfig.useCommitDistance())
-                    .setUseGitCommitId(pluginConfig.useGitCommitId())
-                    .setGitCommitIdLength(pluginConfig.gitCommitIdLength())
-                    .setUseDirty(pluginConfig.useDirty())
-                    .setNonQualifierBranches(pluginConfig.nonQualifierBranches().stream().collect(Collectors.joining(",")));
-
-            jGitverVersion = new JGitverVersion(gitVersionCalculator);
-            fillPropertiesFromMetadatas(properties, jGitverVersion, logger);
-        } catch (Exception ex) {
-            throw new IOException(ex.getMessage(), ex);
-        }
-
-        return jGitverVersion;
-    }
-
-    /**
      * Attach modified POM files to the projects so install/deployed files contains new version.
      *
      * @param projects           projects.
-     * @param newProjectVersions newProjectVersions.
-     * @param mavenSession the current maven build session
-     * @param logger the logger to report to 
+     * @param gavs list of registered GAVs of modified projects.
+     * @param version the version to set
+     * @param logger the logger to report to
      * @throws IOException if project model cannot be read correctly
      * @throws XmlPullParserException if project model cannot be interpreted correctly
      */
-    public static void attachModifiedPomFilesToTheProject(List<MavenProject> projects, Map<GAV, String>
-            newProjectVersions, MavenSession mavenSession, Logger logger) throws IOException, XmlPullParserException {
+    public static void attachModifiedPomFilesToTheProject(List<MavenProject> projects, Set<GAV>
+            gavs, String version, Logger logger) throws IOException, XmlPullParserException {
         for (MavenProject project : projects) {
             Model model = loadInitialModel(project.getFile());
             GAV initalProjectGAV = GAV.from(model);     // SUPPRESS CHECKSTYLE AbbreviationAsWordInName
 
             logger.debug("about to change file pom for: " + initalProjectGAV);
 
-            if (newProjectVersions.containsKey(initalProjectGAV)) {
-                model.setVersion(newProjectVersions.get(initalProjectGAV));
+            if (gavs.contains(initalProjectGAV)) {
+                model.setVersion(version);
+
+                if (model.getScm() != null && project.getModel().getScm() != null) {
+                    model.getScm().setTag(project.getModel().getScm().getTag());
+                }
             }
 
             if (model.getParent() != null) {
                 GAV parentGAV = GAV.from(model.getParent());    // SUPPRESS CHECKSTYLE AbbreviationAsWordInName
 
-                if (newProjectVersions.keySet().contains(parentGAV)) {
+                if (gavs.contains(parentGAV)) {
                     // parent has been modified
-                    model.getParent().setVersion(newProjectVersions.get(parentGAV));
+                    model.getParent().setVersion(version);
                 }
             }
 
@@ -238,7 +210,7 @@ public final class JGitverUtils {
     }
 
     /**
-     * fail the build by throwing a {@link MavenExecutionException} and logging a failure message
+     * fail the build by throwing a {@link MavenExecutionException} and logging a failure message.
      * @param logger the logger to log information
      * @throws MavenExecutionException to make the build fail
      */
@@ -261,10 +233,111 @@ public final class JGitverUtils {
      *     mvn -Djgitver.skip=true/false
      * </pre>
      * The value of the property is evaluated using @{@link java.lang.Boolean#parseBoolean(String)}.
-     * @param s a running maven session
+     * @param session a running maven session
      * @return true if jgitver extension should be skipped
      */
-    public static boolean shouldSkip(MavenSession s) {
-        return Boolean.parseBoolean(s.getUserProperties().getProperty(EXTENSION_SKIP, "false"));
+    public static boolean shouldSkip(MavenSession session) {
+        return Boolean.parseBoolean(session.getSystemProperties().getProperty(EXTENSION_SKIP, "false")) || Boolean.parseBoolean(session.getUserProperties().getProperty(EXTENSION_SKIP, "false"));
+    }
+
+    /**
+     * Tells if this jgitver extension should use maven-flatten-plugin instead of its own mechanism.
+     * To activate flatten plugin
+     * <pre>
+     *     mvn -Djgitver.flatten=true/false
+     * </pre>
+     * The value of the property is evaluated using @{@link java.lang.Boolean#parseBoolean(String)}.
+     * @param session a running maven session
+     * @return true if jgitver extension should use flatten
+     */
+    public static boolean shouldUseFlattenPlugin(MavenSession session) {
+        return Boolean.parseBoolean(session.getSystemProperties().getProperty(EXTENSION_FLATTEN, "false")) || Boolean.parseBoolean(session.getUserProperties().getProperty(EXTENSION_FLATTEN, "false"));
+    }
+
+    /**
+     * Provides the version to use if defined as user or system property.
+     * @param session a running maven session
+     * @param logger logger
+     * @return an Optional containing the version to use if the corresponding user or system property has been defined
+     */
+    public static Optional<String> versionOverride(final MavenSession session, final Logger logger) {
+        return getProperty(session, EXTENSION_USE_VERSION, logger);
+    }
+
+    /**
+     * Tries to get the property from the user properties ({@link MavenSession#getUserProperties()}) or from the
+     * system properties ({@link MavenSession#getSystemProperties()}).
+     *
+     * <p>The variable can be defined with it's exact name or with it's
+     * IEEE Std 1003.1-2001 compliant version ({@link #normalizeSystemPropertyName(String)}).
+     *
+     * <p>User properties have higher priority than all other properties. Environment properties have higher priority
+     * than system properties. Exact matches have higher priority than IEEE Std 1003.1-2001 compliant versions.
+     *
+     * @param session A running maven session.
+     * @param propertyName The name of the property to retrieve.
+     * @param logger logger.
+     * @return The value of the property of empty if it has not been defined.
+     */
+    public static Optional<String> getProperty(final MavenSession session, final String propertyName, final Logger logger) {
+        final String normalizedSystemPropertyName = normalizeSystemPropertyName(propertyName);
+
+        String value;
+
+        value = session.getUserProperties().getProperty(propertyName);
+        if (value != null) {
+            logger.debug(String.format("Found '%s'='%s' in user properties", propertyName, value));
+            return Optional.of(value);
+        }
+
+        value = session.getUserProperties().getProperty(normalizedSystemPropertyName);
+        if (value != null) {
+            logger.debug(String.format("Found '%s'='%s' in user properties", normalizedSystemPropertyName, value));
+            return Optional.of(value);
+        }
+
+        final String envPrefix = "env.";
+        value = session.getSystemProperties().getProperty(envPrefix + propertyName);
+        if (value != null) {
+            logger.debug(String.format("Found '%s'='%s' in system properties (as env property)", propertyName, value));
+            return Optional.of(value);
+        }
+
+        value = session.getSystemProperties().getProperty(envPrefix + normalizedSystemPropertyName);
+        if (value != null) {
+            logger.debug(String.format("Found '%s'='%s' in system properties (as env property)", normalizedSystemPropertyName, value));
+            return Optional.of(value);
+        }
+
+        value = session.getSystemProperties().getProperty(propertyName);
+        if (value != null) {
+            logger.debug(String.format("Found '%s'='%s' in system properties (as system property)", propertyName, value));
+            return Optional.of(value);
+        }
+
+        value = session.getSystemProperties().getProperty(normalizedSystemPropertyName);
+        if (value != null) {
+            logger.debug(String.format("Found '%s'='%s' in system properties (as system property)", normalizedSystemPropertyName, value));
+            return Optional.of(value);
+        }
+
+        return Optional.empty();
+    }
+
+    /**
+     * Derives an IEEE Std 1003.1-2001 compliant property name by replacing all non-compliant characters with underscore.
+     *
+     * <p>In IEEE Std 1003.1-2001 it was defined that the variable name consist solely of uppercase letters, digits, and the '_' (underscore)
+     * from the characters defined in Portable Character Set and do not begin with a digit. Although IEEE Std 1003.1-2008 / IEEE POSIX P1003.2/ISO 9945.2
+     * doesn't define a lexical convention for variable names, most bash implementations use `[a-zA-Z_]+[a-zA-Z0-9_]*`.
+     *
+     * @return A derived IEEE Std 1003.1-2001 compliant property name.
+     */
+    public static String normalizeSystemPropertyName(final String mavenPropertyName) {
+        if (StringUtils.isBlank(mavenPropertyName)) {
+            throw new IllegalStateException("It's not possible to normalize a blank name into a compliant name");
+        }
+
+        return StringUtils.replacePattern(StringUtils.replacePattern(mavenPropertyName, "[^a-zA-Z0-9_]", "_"), "^[0-9]", "_");
     }
 }

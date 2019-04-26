@@ -1,15 +1,27 @@
-language: bash
+language: java
 
-sudo: required
+env:
+  - MAVEN_VERSION=3.3.9
+  - MAVEN_VERSION=3.5.4
 
-services:
-  - docker
+jdk: oraclejdk8
 
+install:
+  - "mvn --show-version -N -Psonatype io.takari:maven:0.6.1:wrapper -Dmaven=${MAVEN_VERSION}"
+  - "echo ignore modifications done by maven wrapper"
+  - "git update-index --assume-unchanged .mvn/wrapper/maven-wrapper.properties"
+  - "git update-index --assume-unchanged .mvn/wrapper/maven-wrapper.jar"
+  - "git update-index --assume-unchanged .mvn/wrapper/MavenWrapperDownloader.java"
+  - "./mvnw --show-version -Psonatype install -DskipTests=true -Dmaven.javadoc.skip=true -B -V"
+before_script:
+    # reset correct branch information
+    - "./travis-set-branch.sh"
 script:
-  - docker run --rm -v $(pwd):/root/sources -w /root/sources maven:3.3.9-jdk-8 mvn -Prun-its clean install
+    - "./mvnw --show-version -Psonatype -Prun-its clean install"
 
-after_failure:
-  - find target/it -name *.log -exec echo {} \; -exec cat {} \;
+cache:
+  directories:
+    - $HOME/.m2
 
 branches:
     except:
